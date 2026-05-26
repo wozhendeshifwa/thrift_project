@@ -6,6 +6,13 @@
 #include <thrift/server/TSimpleServer.h>
 #include <thrift/transport/TServerSocket.h>
 #include <thrift/transport/TBufferTransports.h>
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+#include <vector>
+#include <string>
 
 using namespace ::apache::thrift;
 using namespace ::apache::thrift::protocol;
@@ -13,6 +20,78 @@ using namespace ::apache::thrift::transport;
 using namespace ::apache::thrift::server;
 
 using namespace  ::match_service;
+
+
+// 类：Pool，用于管理用户池和匹配逻辑
+class Pool {
+private:
+  std::vector<User> users;  // 存储用户的数组
+
+public:
+  // 增加用户
+  void add(const User& user) {
+    users.push_back(user);
+  }
+  // 删除用户
+  void remove(const User& user) {
+    for (auto it = users.begin(); it != users.end(); ++it) {
+      if (it->id == user.id) {
+        users.erase(it);
+        break;
+      }
+    }
+  }
+  // 匹配用户：从users中简单弹出两个元素，并输出匹配的id
+  void match() {
+    if (users.size() >= 2) {
+      User a = users.back();
+      users.pop_back();
+      User b = users.back();
+      users.pop_back();
+      printf("匹配成功: %d 和 %d\n", a.id, b.id);
+    }
+  }
+};// 全局Pool对象
+Pool pool;
+
+
+// 定义任务结构体，用于存储用户和操作类型
+struct Task {
+  User user;           // 用户信息
+  std::string op;      // 操作类型（"add" 或 "delete"）
+};
+
+// 定义消息队列结构体，包含任务队列、互斥信号量和条件变量
+struct Message_que {
+  std::queue<Task> tasks;           // Task任务队列
+  std::mutex mtx;                   // 互斥信号量，用于保护队列的线程安全
+  std::condition_variable cv;       // 条件变量，用于线程间的同步通知
+};
+// 全局消息队列对象
+Message_que message_que;
+
+void consume_task() {
+    while (true) {
+        std::unique_lock<std::mutex> lock(message_que.mtx);
+        // 若队列为空，则阻塞等待
+        if (message_que.tasks.empty()) {
+            message_que.cv.wait(lock);
+        }
+        // 消耗一个队列元素
+        Task task = message_que.tasks.front();
+        message_que.tasks.pop();
+        lock.unlock();
+
+        // 根据操作类型，调用pool的增删方法
+        if (task.op == "add") {
+            pool.add(task.user);
+        } else if (task.op == "delete") {
+            pool.remove(task.user);
+        }
+        pool.match();
+        
+    }
+}
 
 class MatchServiceHandler : virtual public MatchServiceIf {
  public:
@@ -23,11 +102,33 @@ class MatchServiceHandler : virtual public MatchServiceIf {
   int32_t addUser(const User& user, const std::string& info) {
     // Your implementation goes here
     printf("addUser\n");
+    // 互斥访问message_que 添加队列元素
+    {
+        std::unique_lock<std::mutex> lock(message_que.mtx);
+        Task task;
+        task.user = user;
+        task.op = "add";
+        message_que.tasks.push(task);
+    }
+    message_que.cv.notify_one();
+    return 0;
   }
 
   int32_t deleteUser(const User& user, const std::string& info) {
     // Your implementation goes here
     printf("deleteUser\n");
+
+    // 互斥访问message_que 添加队列元素
+    {
+        std::unique_lock<std::mutex> lock(message_que.mtx);
+        Task task;
+        task.user = user;
+        task.op = "delete";
+        message_que.tasks.push(task);
+    }
+    message_que.cv.notify_one();
+
+    return 0;
   }
 
 };
@@ -41,6 +142,9 @@ int main(int argc, char **argv) {
   ::std::shared_ptr<TProtocolFactory> protocolFactory(new TBinaryProtocolFactory());
 
   TSimpleServer server(processor, serverTransport, transportFactory, protocolFactory);
+  // 创建消费者线程
+  std::thread consumer_thread(consume_task);
+  consumer_thread.detach();
   server.serve();
   return 0;
 }
