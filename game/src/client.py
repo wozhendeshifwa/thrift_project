@@ -1,5 +1,5 @@
-from gen_py.match import MatchService
-from gen_py.match.ttypes import User
+from match_client.match import MatchService
+from match_client.match.ttypes import User
 
 from thrift import Thrift
 from thrift.transport import TSocket
