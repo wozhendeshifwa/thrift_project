@@ -10,7 +10,15 @@
 #include <thrift/transport/TBufferTransports.h>
 #include <thrift/transport/TSocket.h>
 #include <thrift/transport/TTransportUtils.h>
-
+#include <thrift/concurrency/ThreadManager.h>
+#include <thrift/concurrency/ThreadFactory.h>
+#include <thrift/protocol/TBinaryProtocol.h>
+#include <thrift/server/TSimpleServer.h>
+#include <thrift/server/TThreadPoolServer.h>
+#include <thrift/server/TThreadedServer.h>
+#include <thrift/transport/TServerSocket.h>
+#include <thrift/transport/TTransportUtils.h>
+#include <thrift/TToString.h>
 
 #include <iostream>
 #include <thread>
@@ -27,6 +35,13 @@ using namespace ::apache::thrift::server;
 
 using namespace ::match_service;
 using namespace ::save_service;
+
+using namespace apache::thrift;
+using namespace apache::thrift::concurrency;
+using namespace apache::thrift::protocol;
+using namespace apache::thrift::transport;
+using namespace apache::thrift::server;
+
 
 // 类：Pool，用于管理用户池和匹配逻辑
 class Pool {
@@ -154,15 +169,27 @@ class MatchServiceHandler : virtual public MatchServiceIf {
 
 };
 
-int main(int argc, char **argv) {
-    int port = 9090;
-    ::std::shared_ptr<MatchServiceHandler> handler(new MatchServiceHandler());
-    ::std::shared_ptr<TProcessor> processor(new MatchServiceProcessor(handler));
-    ::std::shared_ptr<TServerTransport> serverTransport(new TServerSocket(port));
-    ::std::shared_ptr<TTransportFactory> transportFactory(new TBufferedTransportFactory());
-    ::std::shared_ptr<TProtocolFactory> protocolFactory(new TBinaryProtocolFactory());
+class MatchServiceCloneFactory : virtual public MatchServiceIfFactory {
+    public:
+        ~MatchServiceCloneFactory() override = default;
+        MatchServiceIf* getHandler(const ::apache::thrift::TConnectionInfo& connInfo) override
+        {
+            std::shared_ptr<TSocket> sock = std::dynamic_pointer_cast<TSocket>(connInfo.transport);
+            return new MatchServiceHandler;
+        }
+        void releaseHandler( MatchServiceIf* handler) override {
+            delete handler;
+        }
+};
 
-    TSimpleServer server(processor, serverTransport, transportFactory, protocolFactory);
+int main(int argc, char **argv) {
+    TThreadedServer server(
+            std::make_shared<MatchServiceProcessorFactory>(std::make_shared<MatchServiceCloneFactory>()),
+            std::make_shared<TServerSocket>(9090), //port
+            std::make_shared<TBufferedTransportFactory>(),
+            std::make_shared<TBinaryProtocolFactory>());
+    std::cout << "Welcome to MatchServiceService server!" << std::endl;
+
     // 创建消费者线程
     std::thread consumer_thread(consume_task);
     consumer_thread.detach();
