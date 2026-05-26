@@ -37,19 +37,37 @@ def operate(op,id,name,score):
 
 def main():
     # stdin 循环读入一行op id name score
-    # 判读输入合法性
+    #  字段匹配 输入合法性验证
     for line in stdin:
         line = line.strip()
         if not line:
             continue
-        op, id, name, score = line.split()
-        try:
-            id = int(id)
-            score = int(score)
-        except ValueError:
-            print("输入格式错误")
+        
+        parts = line.split()
+        if len(parts) != 4:
+            print("输入格式错误，需要4个字段: op id name score")
             continue
-        operate(op,id,name,score)
+        
+        op, id_str, name, score_str = parts
+        
+        # 验证操作类型
+        if op not in ['add', 'remove']:
+            print(f"操作类型错误: {op}，只能是 add 或 remove")
+            continue
+        # 验证id为整数
+        try:
+            id = int(id_str)
+        except ValueError:
+            print(f"id必须是整数: {id_str}")
+            continue
+        # 验证score为整数
+        try:
+            score = int(score_str)
+        except ValueError:
+            print(f"score必须是整数: {score_str}")
+            continue
+        # 调用操作
+        operate(op, id, name, score)
         
 if __name__ == '__main__':
     main()
